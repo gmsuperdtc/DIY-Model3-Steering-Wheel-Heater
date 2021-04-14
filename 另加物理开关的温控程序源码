@@ -1,0 +1,189 @@
+#include "reg51.h"
+#include "intrins.h"
+#include "stdio.h"
+
+#define FOSC 11059200UL
+#define BRT (65536 - FOSC / 115200 / 4)
+sfr         ADCCFG      =           0xDE;
+sfr         ADC_CONTR   =           0xBC;
+sfr         ADC_RES     =           0xBD;
+sfr         ADC_RESL    =           0xBE;
+
+sfr         P3M1        =           0xB1;
+sfr         P3M0        =           0xB2;
+sfr         P5M0        =   0xca;
+sfr         P5M1        =   0xc9;
+sfr         P5          =           0xC8;
+sbit        P50         =           P5^0;
+sbit        P51         =           P5^1;
+sbit        P52         =           P5^2;
+sbit        P53         =           P5^3;
+sbit        P54         =           P5^4;
+sfr AUXR = 0x8e;
+
+bit busy;
+char *ID="test\r\n";
+
+void UartIsr() interrupt 4 
+{
+ if (TI)
+ {
+  TI = 0;
+  busy = 0;
+ }
+ if (RI)
+ {
+  RI = 0;
+ }
+}
+
+void UartInit()
+{
+ SCON = 0x50;
+ TMOD = 0x00;
+ TL1 = BRT;
+ TH1 = BRT >> 8;
+ TR1 = 1;
+ AUXR = 0x40;
+ busy = 0;
+}
+
+void UartSend(char dat)
+{
+ while (busy);
+ busy = 1;
+ SBUF = dat;
+}
+void SendString(   char *s)
+{
+ 
+    while (*s)                  //检测字符串结束标志
+    {
+        UartSend(*s++);         //发送当前字符
+    }
+		
+}
+void Delay10000ms()  //@11.0592MHz
+{
+ unsigned char i, j, k;
+
+ _nop_();
+ _nop_();
+ i = 50;
+ j = 9;
+ k = 128;
+ do
+ {
+  do
+  {
+   while (--k);
+  } while (--j);
+ } while (--i);
+}
+void hal_init_ADC()
+{
+ 
+ //P32 is : 
+P3M0=P3M0&0xFB;
+P3M1=P3M1|0x04;//P32高阻
+//2021/3/15
+
+     
+	 //ADCCFG寄存器
+	 //    B7__B6__ B5    __B4__B3__B2__B1__B0__ 
+	 //	  - __- __RESFMT __- __   SPEED[3:0] __
+	 //    RESFMT：=1 右对齐	:=0 左对齐
+	 //    SPEED adc时钟控制	 ADC时钟:SYSclk/2/16/SPEED 
+	 //          如： SPEED=1111，SYSclk=24MHz。 则Fadc=24M/2/16/16=46.875kHz, tadc=21ms
+    ADCCFG = 0x22; //f_设置ADC时钟:Fadc=11M/2/16/2=171kHz,tadc=1.3us
+                   //2_设置为右对齐
+									 //adc
+    //ADC_CONTR寄存器
+	//    B7__________B6__________B5 ________B4__B3__B2__B1__B0__ 
+	//	  ADC_POWER___ADC_STRAT___ADC_FLAG __- __  ADC_CHS[3:0] __
+	//    ADC_STRAT：=1 开始转换，完成自动清零	:=0 无作用
+	//    ADC_FLAG：转换完成硬件置1，必须软件清零。 
+	//	  ADC_CHS[3:0]选择通道0-14是(P1.0—P1.7,P0.0-P0.6),15是内部refv的电压1.344
+  //              选择通道1001 是P01
+       
+    //ADC_CONTR = 0x8A;        //打开ADC模块电源,选择通道1010 就是P02
+}
+
+void api_read_adc(unsigned int *Adc_result,unsigned char adc_channel)
+{
+     
+    ADC_CONTR = (0xC0|adc_channel);     //启动AD转换
+    _nop_();
+    _nop_();
+    while (!(ADC_CONTR & 0x20));            //查询ADC完成标志
+    ADC_CONTR &= ~0x20;                     //清完成标志
+    *Adc_result = (ADC_RES<<8|ADC_RESL);    //读取ADC结果。右对齐，高位自动填充为0
+
+
+    ADC_CONTR = (0xC0|adc_channel);   //启动AD转换
+    _nop_();
+    _nop_();
+    while (!(ADC_CONTR & 0x20));            //查询ADC完成标志
+    ADC_CONTR &= ~0x20;                     //清完成标志
+    *Adc_result = (ADC_RES<<8|ADC_RESL);    //读取ADC结果。右对齐，高位自动填充为0
+}
+
+void Delay10ms()		//@11.0592MHz
+{
+	unsigned char i, j;
+
+	i = 108;
+	j = 145;
+	do
+	{
+		while (--j);
+	} while (--i);
+}
+
+
+unsigned int adc_value;
+unsigned char string[20];
+ unsigned int pwm=0;
+
+
+void main()
+{
+ char i;
+ 
+ UartInit();
+ ES = 1;
+ EA = 1;
+ hal_init_ADC();
+     P5M0 = 0xff;                                //设置P5.0~P5.7为推挽输出模式
+    P5M1 = 0x00;
+     P54 =1;  
+ 
+ while (1)
+ {
+   if(pwm>100)
+			 pwm=0;
+	 pwm++;
+	 
+     api_read_adc(&adc_value,2 );
+     sprintf(string,"adc=%d\r\n",adc_value);
+     SendString(string);
+   
+     if(adc_value < 840)//小于一个值，说明温度达到要求，断电
+		 {
+		   P54=0;
+		 }
+		 else  if(adc_value > 845)//大于一个值，则说明温度低下来了，开启加热
+		 {
+		  if(pwm<70)
+			{
+			  P54=1;
+				Delay100ms();
+			}
+			else 
+			{
+	     P54=0;
+	     Delay100ms();
+			} 
+		 }
+ }
+ }
