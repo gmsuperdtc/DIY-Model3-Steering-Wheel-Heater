@@ -1,9 +1,5 @@
 # DIY-Model3-Steering-Wheel-Heater
 
-用比特币向我捐款！
-Donate BTC！
-
-bc1q4s9czswx5fr2aveextzjt4c7hyam9g65q2aped
 
 首先你需要有一个原厂带加热的方向盘。
 判断方法为检查方向盘6点钟方向有没有一根4根线组成的线束。
